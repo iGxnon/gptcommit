@@ -81,7 +81,6 @@ fn get_llm_client(settings: &Settings) -> Box<dyn LlmClient> {
 }
 
 pub(crate) async fn main(settings: Settings, args: PrepareCommitMsgArgs) -> Result<()> {
-    settings.test_environment().await;
     match (args.commit_source, settings.allow_amend) {
         (CommitSource::Empty, _) | (CommitSource::Commit, Some(true)) => {}
         (CommitSource::Commit, _) => {
@@ -95,6 +94,11 @@ pub(crate) async fn main(settings: Settings, args: PrepareCommitMsgArgs) -> Resu
             return Ok(());
         }
     };
+
+    // Check local network environment before asking to OpenAI
+    if matches!(settings.ensure_network, Some(true)) {
+        settings.test_environment().await;
+    }
 
     let client = get_llm_client(&settings);
     let summarization_client = SummarizationClient::new(settings.to_owned(), client)?;

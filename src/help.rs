@@ -23,3 +23,21 @@ Note: OPENAI_API_KEY will be deprecated in a future release. Please use GPTCOMMI
             .yellow(),
         );
 }
+
+pub(crate) fn exit_with_network_issue(region: Option<String>) {
+    if let Some(region) = region {
+        println!(
+            r#"🤖 Your IP address is from {}, which is not in [supported regions of OpenAI]( https://platform.openai.com/docs/supported-countries )."#,
+            region
+        );
+    } else {
+        println!(
+            r#"🤖 We were unable to check if your IP region is a [supported region of OpenAI]( https://platform.openai.com/docs/supported-countries )."#
+        );
+    }
+    println!(
+        r#"Please check your Internet connection, and ensure that you are accessing the API in a supported region of OpenAI,
+or your account may get banned regardless of your GPT Plus subscription status or any remaining account balance."#
+    );
+    std::process::exit(0);
+}

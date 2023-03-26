@@ -15,6 +15,7 @@ use strum_macros::{Display, IntoStaticStr};
 
 use crate::{
     git::get_hooks_path,
+    help::exit_with_network_issue,
     prompt::{
         PROMPT_TO_CONVENTIONAL_COMMIT_PREFIX, PROMPT_TO_SUMMARIZE_DIFF,
         PROMPT_TO_SUMMARIZE_DIFF_SUMMARIES, PROMPT_TO_SUMMARIZE_DIFF_TITLE, PROMPT_TO_TRANSLATE,
@@ -220,6 +221,8 @@ pub(crate) struct Settings {
     pub file_ignore: Option<Vec<String>>,
     /// Proxy used in reqwest client
     pub proxy: Option<ProxySettings>,
+    /// Whether to check the network environment before each inquiry to OpenAI.
+    pub ensure_network: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
@@ -296,7 +299,8 @@ impl Settings {
                     url: None,
                     basic_auth: None,
                 }),
-            )?;
+            )?
+            .set_default("ensure_network", Some(true))?;
 
         if let Some(home_dir) = dirs::home_dir() {
             debug!("Using home dir at {}", home_dir.display());
@@ -371,24 +375,22 @@ impl Settings {
             test_builder
         };
         let test_env = test_builder.build().expect("ClientBuilder::build");
-        let ipinfo = test_env
-            .get("https://ipinfo.io")
-            .send()
-            .await
-            .expect("cannot get current ip info")
-            .json::<IpInfoResp>()
-            .await
-            .expect("cannot get current ip info");
-        if BLOCK_REGIONS.contains(&ipinfo.country.to_uppercase().as_str()) {
-            println!(
-                r#"🤖 We were unable to check if your IP region({}) is in a [supported region of OpenAI]( https://platform.openai.com/docs/supported-countries ).
-Please check your Internet connection, and ensure that you are accessing the API in a supported region of OpenAI,
-or your account may get banned regardless of your GPT Plus subscription status or any remaining account balance."#,
-                ipinfo.country
-            );
-            std::process::exit(0);
+        let resp = test_env.get("https://ipinfo.io").send().await;
+        if resp.is_err() {
+            exit_with_network_issue(None);
         }
-        println!("🤖 Checked your IP region({})", ipinfo.country);
+        let ipinfo = resp.unwrap().json::<IpInfoResp>().await;
+        if ipinfo.is_err() {
+            exit_with_network_issue(None);
+        }
+        let ipinfo = ipinfo.unwrap();
+        if BLOCK_REGIONS.contains(&ipinfo.country.to_uppercase().as_str()) {
+            exit_with_network_issue(Some(format!("{}-{}", ipinfo.country, ipinfo.region)));
+        }
+        println!(
+            "🤖 Verified your IP region({})",
+            format!("{}-{}", ipinfo.country, ipinfo.region)
+        );
     }
 }
 
