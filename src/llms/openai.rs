@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use tiktoken_rs::{get_chat_completion_max_tokens, get_completion_max_tokens};
 
-use crate::settings::OpenAISettings;
+use crate::settings::{OpenAISettings, ProxySettings};
 use async_openai::{
     types::{
         ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs,
@@ -47,6 +47,29 @@ impl OpenAIClient {
             client = client.with_backoff(backoff);
         }
         Ok(Self { model, client })
+    }
+
+    pub(crate) fn with_proxy(
+        settings: OpenAISettings,
+        proxy_settings: ProxySettings,
+    ) -> Result<Self, anyhow::Error> {
+        let mut openai = Self::new(settings)?;
+        let mut proxy = if let Some(url) = &proxy_settings.url {
+            reqwest::Proxy::all(url.to_owned()).expect("invalid proxy scheme")
+        } else {
+            reqwest::Proxy::custom(|_| Option::<String>::None)
+        };
+        proxy = if let Some(auth) = &proxy_settings.basic_auth {
+            proxy.basic_auth(&*auth.username, &*auth.password)
+        } else {
+            proxy
+        };
+        let http_client = reqwest::Client::builder()
+            .proxy(proxy)
+            .build()
+            .expect("ClientBuilder::build()");
+        openai.client = openai.client.with_http_client(http_client);
+        Ok(openai)
     }
 
     pub(crate) fn should_use_chat_completion(model: &str) -> bool {

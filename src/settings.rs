@@ -176,6 +176,39 @@ impl From<OutputSettings> for config::ValueKind {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub(crate) struct ProxyBasicAuth {
+    pub(crate) username: String,
+    pub(crate) password: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub(crate) struct ProxySettings {
+    // Proxy all traffic from openai to the passed URL.
+    pub(crate) url: Option<String>,
+    // Set the Proxy-Authorization header using Basic auth.
+    pub(crate) basic_auth: Option<ProxyBasicAuth>,
+}
+
+impl From<ProxySettings> for config::ValueKind {
+    fn from(settings: ProxySettings) -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("url".to_string(), config::Value::from(settings.url));
+        let mut auth_properties = Option::<HashMap<String, String>>::None;
+        if let Some(auth) = settings.basic_auth {
+            let mut properties = HashMap::new();
+            properties.insert("username".to_string(), auth.username.to_owned());
+            properties.insert("password".to_string(), auth.password.to_owned());
+            auth_properties = Some(properties);
+        }
+        properties.insert(
+            "basic_auth".to_string(),
+            config::Value::from(auth_properties),
+        );
+        Self::Table(properties)
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub(crate) struct Settings {
     pub model_provider: Option<ModelProvider>,
     pub openai: Option<OpenAISettings>,
@@ -185,6 +218,14 @@ pub(crate) struct Settings {
     pub allow_amend: Option<bool>,
     /// Files to ignore, format similar to gitignore
     pub file_ignore: Option<Vec<String>>,
+    /// Proxy used in reqwest client
+    pub proxy: Option<ProxySettings>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+struct IpInfoResp {
+    country: String,
+    region: String,
 }
 
 impl Settings {
@@ -248,6 +289,13 @@ impl Settings {
                     lang: Some("en".to_string()),
                     show_per_file_summary: Some(false),
                 }),
+            )?
+            .set_default(
+                "proxy",
+                Some(ProxySettings {
+                    url: None,
+                    basic_auth: None,
+                }),
             )?;
 
         if let Some(home_dir) = dirs::home_dir() {
@@ -302,6 +350,46 @@ impl Settings {
 
         Ok(settings)
     }
+
+    /// Test the network environment to ensure that it supports OpenAI and prevent
+    /// the account from being blocked by OpenAI.
+    pub(crate) async fn test_environment(&self) {
+        let mut test_builder = reqwest::ClientBuilder::new();
+        test_builder = if let Some(proxy_setting) = &self.proxy {
+            let mut proxy = if let Some(url) = &proxy_setting.url {
+                reqwest::Proxy::all(url.to_owned()).expect("invalid proxy scheme")
+            } else {
+                reqwest::Proxy::custom(|_| Option::<String>::None)
+            };
+            proxy = if let Some(auth) = &proxy_setting.basic_auth {
+                proxy.basic_auth(&*auth.username, &*auth.password)
+            } else {
+                proxy
+            };
+            test_builder.proxy(proxy)
+        } else {
+            test_builder
+        };
+        let test_env = test_builder.build().expect("ClientBuilder::build");
+        let ipinfo = test_env
+            .get("https://ipinfo.io")
+            .send()
+            .await
+            .expect("cannot get current ip info")
+            .json::<IpInfoResp>()
+            .await
+            .expect("cannot get current ip info");
+        if BLOCK_REGIONS.contains(&ipinfo.country.to_uppercase().as_str()) {
+            println!(
+                r#"🤖 We were unable to check if your IP region({}) is in a [supported region of OpenAI]( https://platform.openai.com/docs/supported-countries ).
+Please check your Internet connection, and ensure that you are accessing the API in a supported region of OpenAI,
+or your account may get banned regardless of your GPT Plus subscription status or any remaining account balance."#,
+                ipinfo.country
+            );
+            std::process::exit(0);
+        }
+        println!("🤖 Checked your IP region({})", ipinfo.country);
+    }
 }
 
 pub fn get_local_config_path() -> Option<PathBuf> {
@@ -340,4 +428,10 @@ pub fn get_user_config_path() -> Option<PathBuf> {
     }
     None
 }
+
 const APP_NAME: &str = "gptcommit";
+const BLOCK_REGIONS: [&str; 38] = [
+    "CN", "RU", "NG", "UA", "LA", "KP", "KH", "VN", "BY", "UZ", "TJ", "AZ", "IR", "TM", "AF", "SY",
+    "AD", "SA", "YE", "AL", "EG", "SD", "ET", "LY", "TD", "CF", "CM", "DZ", "CG", "BI", "AO", "ZW",
+    "CU", "VE", "PY", "HK", "MO", "",
+];

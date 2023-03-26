@@ -41,6 +41,8 @@ enum Action {
     Install,
     /// Uninstall the git hook
     Uninstall,
+    /// Check the network environment
+    Check,
     /// Read and modify settings
     Config(ConfigArgs),
     /// Run on the prepare-commit-msg hook
@@ -68,6 +70,7 @@ async fn main() -> Result<()> {
         Action::Config(cli) => actions::config::main(settings, cli).await,
         Action::Install => actions::install::main(settings).await,
         Action::Uninstall => actions::uninstall::main(settings).await,
+        Action::Check => Ok(settings.test_environment().await),
         Action::PrepareCommitMsg(cli) => actions::prepare_commit_msg::main(settings, cli).await,
     }
 }

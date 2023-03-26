@@ -65,7 +65,11 @@ fn get_llm_client(settings: &Settings) -> Box<dyn LlmClient> {
             openai: Some(openai),
             ..
         } => {
-            let client = OpenAIClient::new(openai.to_owned());
+            let client = if let Some(proxy) = &settings.proxy {
+                OpenAIClient::with_proxy(openai.to_owned(), proxy.to_owned())
+            } else {
+                OpenAIClient::new(openai.to_owned())
+            };
             if let Err(_e) = client {
                 print_help_openai_api_key();
                 panic!("OpenAI API key not found in config or environment");
@@ -77,6 +81,7 @@ fn get_llm_client(settings: &Settings) -> Box<dyn LlmClient> {
 }
 
 pub(crate) async fn main(settings: Settings, args: PrepareCommitMsgArgs) -> Result<()> {
+    settings.test_environment().await;
     match (args.commit_source, settings.allow_amend) {
         (CommitSource::Empty, _) | (CommitSource::Commit, Some(true)) => {}
         (CommitSource::Commit, _) => {
